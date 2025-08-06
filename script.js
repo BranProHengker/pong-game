@@ -1,232 +1,530 @@
+// Game canvas and context
 const canvas = document.getElementById('pong');
 const ctx = canvas.getContext('2d');
 
-// Colorful palette
-const PADDLE_COLORS = ['#00ffc6', '#ff5c58', '#ffc93c'];
-const BALL_COLORS = ['#00bcd4', '#ff4e50', '#f9d423', '#ff6e7f', '#66ff99'];
-const NET_COLOR = '#fff';
-const SCORE_COLOR = '#f9d423';
-const SHADOW_COLOR = '#222d';
+// Score elements
+const playerScoreElement = document.getElementById('playerScore');
+const aiScoreElement = document.getElementById('aiScore');
+
+// Modern neon color palette matching CSS
+const COLORS = {
+    neonBlue: '#00f5ff',
+    neonPink: '#ff006e', 
+    neonGreen: '#39ff14',
+    neonPurple: '#bf00ff',
+    neonOrange: '#ff8c00',
+    white: '#ffffff',
+    shadow: 'rgba(0, 0, 0, 0.3)'
+};
 
 // Game constants
-const PADDLE_WIDTH = 16;
-const PADDLE_HEIGHT = 110;
-const BALL_RADIUS = 13;
-const PLAYER_X = 28;
-const AI_X = canvas.width - PLAYER_X - PADDLE_WIDTH;
-const PADDLE_SPEED = 7.2;
-const BALL_SPEED = 6.2;
+const GAME_CONFIG = {
+    paddleWidth: 16,
+    paddleHeight: 100,
+    ballRadius: 12,
+    playerX: 30,
+    ballSpeed: 5.5,
+    paddleSpeed: 8,
+    aiSpeed: 3.0,
+    aiReactionDelay: 20,
+    maxBallSpeed: 9
+};
 
-// AI Weakness
-const AI_PADDLE_SPEED = 3.3; // Bikin AI lebih lambat
-const AI_REACT_DELAY = 12;   // Frame delay (semakin besar, semakin lambat AI bereaksi)
-const AI_ERROR_RANGE = 60;   // Error acak maksimum (pixel)
-
-let aiTargetY = 0;
-let aiDelayCounter = 0;
+// Calculate AI paddle position
+GAME_CONFIG.aiX = canvas.width - GAME_CONFIG.playerX - GAME_CONFIG.paddleWidth;
 
 // Game state
-let playerY = (canvas.height - PADDLE_HEIGHT) / 2;
-let aiY = (canvas.height - PADDLE_HEIGHT) / 2;
-let ballX = canvas.width / 2;
-let ballY = canvas.height / 2;
-let ballVX = BALL_SPEED * (Math.random() > 0.5 ? 1 : -1);
-let ballVY = BALL_SPEED * (Math.random() * 2 - 1);
-let ballColorIndex = 0;
-let playerScore = 0;
-let aiScore = 0;
-let paddleGlow = 0;
+const gameState = {
+    player: {
+        y: (canvas.height - GAME_CONFIG.paddleHeight) / 2,
+        score: 0,
+        color: COLORS.neonBlue
+    },
+    ai: {
+        y: (canvas.height - GAME_CONFIG.paddleHeight) / 2,
+        score: 0,
+        color: COLORS.neonPink,
+        targetY: canvas.height / 2,
+        reactionCounter: 0
+    },
+    ball: {
+        x: canvas.width / 2,
+        y: canvas.height / 2,
+        vx: GAME_CONFIG.ballSpeed * (Math.random() > 0.5 ? 1 : -1),
+        vy: GAME_CONFIG.ballSpeed * (Math.random() * 2 - 1),
+        color: COLORS.neonGreen,
+        trail: []
+    },
+    effects: {
+        paddleGlow: 0,
+        ballGlow: 0,
+        screenShake: 0
+    },
+    controls: {
+        upPressed: false,
+        downPressed: false,
+        paused: false
+    },
+    particles: []
+};
 
-// Mouse control for player paddle
+// Input handling
+const keys = {};
+
+// Keyboard controls
+document.addEventListener('keydown', (e) => {
+    keys[e.code] = true;
+    
+    switch(e.code) {
+        case 'ArrowUp':
+            gameState.controls.upPressed = true;
+            e.preventDefault();
+            break;
+        case 'ArrowDown':
+            gameState.controls.downPressed = true;
+            e.preventDefault();
+            break;
+        case 'Space':
+            gameState.controls.paused = !gameState.controls.paused;
+            e.preventDefault();
+            break;
+    }
+});
+
+document.addEventListener('keyup', (e) => {
+    keys[e.code] = false;
+    
+    switch(e.code) {
+        case 'ArrowUp':
+            gameState.controls.upPressed = false;
+            break;
+        case 'ArrowDown':
+            gameState.controls.downPressed = false;
+            break;
+    }
+});
+
+// Mouse controls (alternative to keyboard)
 canvas.addEventListener('mousemove', (e) => {
     const rect = canvas.getBoundingClientRect();
     const mouseY = e.clientY - rect.top;
-    playerY = mouseY - PADDLE_HEIGHT / 2;
-    if (playerY < 0) playerY = 0;
-    if (playerY > canvas.height - PADDLE_HEIGHT)
-        playerY = canvas.height - PADDLE_HEIGHT;
+    const targetY = mouseY - GAME_CONFIG.paddleHeight / 2;
+    
+    // Smooth mouse movement
+    gameState.player.y += (targetY - gameState.player.y) * 0.1;
+    
+    // Clamp to canvas bounds
+    gameState.player.y = Math.max(0, Math.min(canvas.height - GAME_CONFIG.paddleHeight, gameState.player.y));
 });
 
-// Draw net
+// Particle system for visual effects
+class Particle {
+    constructor(x, y, color, velocity = {}) {
+        this.x = x;
+        this.y = y;
+        this.vx = velocity.x || (Math.random() - 0.5) * 8;
+        this.vy = velocity.y || (Math.random() - 0.5) * 8;
+        this.color = color;
+        this.life = 1.0;
+        this.decay = 0.02 + Math.random() * 0.03;
+        this.size = 2 + Math.random() * 4;
+    }
+    
+    update() {
+        this.x += this.vx;
+        this.y += this.vy;
+        this.vx *= 0.98;
+        this.vy *= 0.98;
+        this.life -= this.decay;
+        this.size *= 0.99;
+    }
+    
+    draw(ctx) {
+        ctx.save();
+        ctx.globalAlpha = this.life;
+        ctx.fillStyle = this.color;
+        ctx.shadowColor = this.color;
+        ctx.shadowBlur = 10;
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+    }
+    
+    isDead() {
+        return this.life <= 0;
+    }
+}
+
+// Create particle explosion
+function createParticles(x, y, color, count = 8) {
+    for (let i = 0; i < count; i++) {
+        const angle = (Math.PI * 2 * i) / count;
+        const speed = 3 + Math.random() * 4;
+        const velocity = {
+            x: Math.cos(angle) * speed,
+            y: Math.sin(angle) * speed
+        };
+        gameState.particles.push(new Particle(x, y, color, velocity));
+    }
+}
+
+// Draw functions with modern neon effects
 function drawNet() {
     ctx.save();
-    ctx.strokeStyle = NET_COLOR;
-    ctx.lineWidth = 4;
-    ctx.setLineDash([18, 14]);
-    ctx.globalAlpha = 0.6;
+    ctx.strokeStyle = COLORS.white;
+    ctx.lineWidth = 3;
+    ctx.setLineDash([15, 10]);
+    ctx.globalAlpha = 0.4;
+    ctx.shadowColor = COLORS.white;
+    ctx.shadowBlur = 5;
+    
     ctx.beginPath();
     ctx.moveTo(canvas.width / 2, 0);
     ctx.lineTo(canvas.width / 2, canvas.height);
     ctx.stroke();
+    
     ctx.setLineDash([]);
+    ctx.restore();
+}
+
+function drawPaddle(x, y, color, glowing = false) {
+    ctx.save();
+    
+    // Glow effect
+    if (glowing) {
+        ctx.shadowColor = color;
+        ctx.shadowBlur = 25;
+        ctx.globalAlpha = 0.8;
+    } else {
+        ctx.shadowColor = COLORS.shadow;
+        ctx.shadowBlur = 10;
+    }
+    
+    // Main paddle
+    ctx.fillStyle = color;
+    ctx.fillRect(x, y, GAME_CONFIG.paddleWidth, GAME_CONFIG.paddleHeight);
+    
+    // Highlight effect
+    const gradient = ctx.createLinearGradient(x, y, x + GAME_CONFIG.paddleWidth, y);
+    gradient.addColorStop(0, 'rgba(255, 255, 255, 0.3)');
+    gradient.addColorStop(0.5, 'rgba(255, 255, 255, 0.1)');
+    gradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
+    
+    ctx.fillStyle = gradient;
+    ctx.fillRect(x, y, GAME_CONFIG.paddleWidth, GAME_CONFIG.paddleHeight);
+    
+    ctx.restore();
+}
+
+function drawBall(ball) {
+    ctx.save();
+    
+    // Ball trail effect
+    ctx.globalAlpha = 0.3;
+    for (let i = 0; i < ball.trail.length; i++) {
+        const trailPoint = ball.trail[i];
+        const alpha = (i / ball.trail.length) * 0.3;
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = ball.color;
+        ctx.beginPath();
+        ctx.arc(trailPoint.x, trailPoint.y, GAME_CONFIG.ballRadius * (i / ball.trail.length), 0, Math.PI * 2);
+        ctx.fill();
+    }
+    
+    // Main ball with gradient and glow
     ctx.globalAlpha = 1;
-    ctx.restore();
-}
-
-// Draw paddles
-function drawPaddle(x, y, colorIndex, glow = false) {
-    ctx.save();
-    ctx.shadowColor = glow ? PADDLE_COLORS[colorIndex] : SHADOW_COLOR;
-    ctx.shadowBlur = glow ? 30 : 8;
-    ctx.fillStyle = PADDLE_COLORS[colorIndex];
-    ctx.fillRect(x, y, PADDLE_WIDTH, PADDLE_HEIGHT);
-    // Pseudo-gloss effect
-    ctx.globalAlpha = 0.13;
-    ctx.fillStyle = "#fff";
-    ctx.fillRect(x + 2, y + 4, PADDLE_WIDTH - 4, PADDLE_HEIGHT * 0.4);
-    ctx.globalAlpha = 1;
-    ctx.restore();
-}
-
-// Draw ball
-function drawBall(x, y, colorIndex) {
-    ctx.save();
-    ctx.shadowColor = BALL_COLORS[colorIndex];
-    ctx.shadowBlur = 28;
-    let grad = ctx.createRadialGradient(x, y, 4, x, y, BALL_RADIUS);
-    grad.addColorStop(0, '#fff');
-    grad.addColorStop(0.5, BALL_COLORS[colorIndex]);
-    grad.addColorStop(1, '#222a');
-    ctx.fillStyle = grad;
-    ctx.beginPath();
-    ctx.arc(x, y, BALL_RADIUS, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-}
-
-// Draw scores
-function drawScores() {
-    ctx.save();
-    ctx.font = "bold 48px Segoe UI, Arial";
-    ctx.textAlign = "center";
-    ctx.shadowColor = '#fff';
-    ctx.shadowBlur = 16;
-    ctx.fillStyle = SCORE_COLOR;
-    ctx.fillText(playerScore, canvas.width / 2 - 80, 62);
-    ctx.fillText(aiScore, canvas.width / 2 + 80, 62);
-    ctx.restore();
-}
-
-// Animated background glow
-function drawBGGlow(time) {
-    let grad = ctx.createLinearGradient(
-        0, (canvas.height * (0.3 + 0.2 * Math.sin(time / 1100))),
-        canvas.width, canvas.height * (0.7 + 0.2 * Math.cos(time / 1200))
+    ctx.shadowColor = ball.color;
+    ctx.shadowBlur = gameState.effects.ballGlow > 0 ? 30 : 15;
+    
+    const gradient = ctx.createRadialGradient(
+        ball.x - 3, ball.y - 3, 0,
+        ball.x, ball.y, GAME_CONFIG.ballRadius
     );
-    grad.addColorStop(0, "#b490ca22");
-    grad.addColorStop(0.4, "#5ee7df11");
-    grad.addColorStop(1, "#ffc93c22");
-    ctx.save();
-    ctx.globalAlpha = 0.8;
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    gradient.addColorStop(0, COLORS.white);
+    gradient.addColorStop(0.3, ball.color);
+    gradient.addColorStop(1, 'rgba(0, 0, 0, 0.3)');
+    
+    ctx.fillStyle = gradient;
+    ctx.beginPath();
+    ctx.arc(ball.x, ball.y, GAME_CONFIG.ballRadius, 0, Math.PI * 2);
+    ctx.fill();
+    
     ctx.restore();
 }
 
-// Draw everything
-function draw(time = 0) {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    drawBGGlow(time);
-    drawNet();
-    drawPaddle(PLAYER_X, playerY, 0, paddleGlow > 0);
-    drawPaddle(AI_X, aiY, 1);
-    drawBall(ballX, ballY, ballColorIndex);
-    drawScores();
+function drawParticles() {
+    gameState.particles.forEach(particle => {
+        particle.draw(ctx);
+    });
 }
 
-// Update game state
-function update() {
-    ballX += ballVX;
-    ballY += ballVY;
+function drawPauseOverlay() {
+    if (!gameState.controls.paused) return;
+    
+    ctx.save();
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    
+    ctx.fillStyle = COLORS.neonBlue;
+    ctx.font = 'bold 48px Orbitron, monospace';
+    ctx.textAlign = 'center';
+    ctx.shadowColor = COLORS.neonBlue;
+    ctx.shadowBlur = 20;
+    ctx.fillText('PAUSED', canvas.width / 2, canvas.height / 2);
+    
+    ctx.font = '20px Space Grotesk, sans-serif';
+    ctx.fillStyle = COLORS.white;
+    ctx.shadowBlur = 10;
+    ctx.fillText('Press SPACE to continue', canvas.width / 2, canvas.height / 2 + 50);
+    ctx.restore();
+}
 
-    // Ball collision with top/bottom walls
-    if (ballY - BALL_RADIUS < 0) {
-        ballY = BALL_RADIUS;
-        ballVY = -ballVY;
-        paddleGlow = 6;
+// Game logic functions
+function updatePlayerPaddle() {
+    if (gameState.controls.upPressed) {
+        gameState.player.y -= GAME_CONFIG.paddleSpeed;
     }
-    if (ballY + BALL_RADIUS > canvas.height) {
-        ballY = canvas.height - BALL_RADIUS;
-        ballVY = -ballVY;
-        paddleGlow = 6;
+    if (gameState.controls.downPressed) {
+        gameState.player.y += GAME_CONFIG.paddleSpeed;
     }
+    
+    // Clamp to canvas bounds
+    gameState.player.y = Math.max(0, Math.min(canvas.height - GAME_CONFIG.paddleHeight, gameState.player.y));
+}
 
-    // Ball collision with player paddle
-    if (
-        ballX - BALL_RADIUS < PLAYER_X + PADDLE_WIDTH &&
-        ballY > playerY &&
-        ballY < playerY + PADDLE_HEIGHT
-    ) {
-        ballX = PLAYER_X + PADDLE_WIDTH + BALL_RADIUS;
-        ballVX = -ballVX * 1.035;
-        let collidePoint = ballY - (playerY + PADDLE_HEIGHT / 2);
-        let normalized = collidePoint / (PADDLE_HEIGHT / 2);
-        ballVY = BALL_SPEED * (normalized + (Math.random() - 0.5) * 0.3);
-        ballColorIndex = (ballColorIndex + 1) % BALL_COLORS.length;
-        paddleGlow = 12;
+function updateAI() {
+    // AI reaction delay for more realistic gameplay
+    gameState.ai.reactionCounter++;
+    
+    if (gameState.ai.reactionCounter > GAME_CONFIG.aiReactionDelay) {
+        // Add some randomness to AI targeting
+        const errorRange = 80;
+        gameState.ai.targetY = gameState.ball.y + (Math.random() - 0.5) * errorRange;
+        gameState.ai.reactionCounter = 0;
     }
-
-    // Ball collision with AI paddle
-    if (
-        ballX + BALL_RADIUS > AI_X &&
-        ballY > aiY &&
-        ballY < aiY + PADDLE_HEIGHT
-    ) {
-        ballX = AI_X - BALL_RADIUS;
-        ballVX = -ballVX * 1.035;
-        let collidePoint = ballY - (aiY + PADDLE_HEIGHT / 2);
-        let normalized = collidePoint / (PADDLE_HEIGHT / 2);
-        ballVY = BALL_SPEED * (normalized + (Math.random() - 0.5) * 0.3);
-        ballColorIndex = (ballColorIndex + 1) % BALL_COLORS.length;
-        paddleGlow = 10;
+    
+    const aiCenter = gameState.ai.y + GAME_CONFIG.paddleHeight / 2;
+    const diff = gameState.ai.targetY - aiCenter;
+    
+    if (Math.abs(diff) > 5) {
+        gameState.ai.y += Math.sign(diff) * GAME_CONFIG.aiSpeed;
     }
+    
+    // Clamp AI paddle to canvas bounds
+    gameState.ai.y = Math.max(0, Math.min(canvas.height - GAME_CONFIG.paddleHeight, gameState.ai.y));
+}
 
-    // Score (ball out left/right)
-    if (ballX - BALL_RADIUS < 0) {
-        aiScore += 1;
+function updateBall() {
+    const ball = gameState.ball;
+    
+    // Update ball trail
+    ball.trail.push({ x: ball.x, y: ball.y });
+    if (ball.trail.length > 8) {
+        ball.trail.shift();
+    }
+    
+    // Move ball
+    ball.x += ball.vx;
+    ball.y += ball.vy;
+    
+    // Wall collisions (top/bottom)
+    if (ball.y - GAME_CONFIG.ballRadius <= 0 || ball.y + GAME_CONFIG.ballRadius >= canvas.height) {
+        ball.vy = -ball.vy;
+        ball.y = ball.y - GAME_CONFIG.ballRadius <= 0 ? GAME_CONFIG.ballRadius : canvas.height - GAME_CONFIG.ballRadius;
+        
+        // Visual effects
+        gameState.effects.screenShake = 5;
+        createParticles(ball.x, ball.y, ball.color, 6);
+    }
+    
+    // Paddle collisions
+    checkPaddleCollision();
+    
+    // Score detection
+    if (ball.x - GAME_CONFIG.ballRadius < 0) {
+        gameState.ai.score++;
+        updateScoreDisplay();
         resetBall(-1);
-    }
-    if (ballX + BALL_RADIUS > canvas.width) {
-        playerScore += 1;
+        createParticles(0, ball.y, COLORS.neonPink, 12);
+    } else if (ball.x + GAME_CONFIG.ballRadius > canvas.width) {
+        gameState.player.score++;
+        updateScoreDisplay();
         resetBall(1);
+        createParticles(canvas.width, ball.y, COLORS.neonBlue, 12);
     }
-
-    // --- EASY AI ---
-    // Delay AI reaction
-    aiDelayCounter++;
-    if (aiDelayCounter > AI_REACT_DELAY) {
-        // Target Y is the ball + random error, but only set after delay
-        aiTargetY = ballY + (Math.random() - 0.5) * AI_ERROR_RANGE;
-        aiDelayCounter = 0;
-    }
-    let aiCenter = aiY + PADDLE_HEIGHT / 2;
-    if (aiTargetY < aiCenter - 16) {
-        aiY -= AI_PADDLE_SPEED;
-    } else if (aiTargetY > aiCenter + 16) {
-        aiY += AI_PADDLE_SPEED;
-    }
-    if (aiY < 0) aiY = 0;
-    if (aiY > canvas.height - PADDLE_HEIGHT) aiY = canvas.height - PADDLE_HEIGHT;
-
-    if (paddleGlow > 0) paddleGlow--;
 }
 
-// Reset ball to center
-function resetBall(dir = 1) {
-    ballX = canvas.width / 2;
-    ballY = canvas.height / 2;
-    ballVX = BALL_SPEED * (dir || (Math.random() > 0.5 ? 1 : -1));
-    ballVY = BALL_SPEED * (Math.random() * 2 - 1);
-    ballColorIndex = Math.floor(Math.random() * BALL_COLORS.length);
-    aiTargetY = canvas.height / 2; // Reset AI target
+function checkPaddleCollision() {
+    const ball = gameState.ball;
+    
+    // Player paddle collision
+    if (ball.x - GAME_CONFIG.ballRadius <= GAME_CONFIG.playerX + GAME_CONFIG.paddleWidth &&
+        ball.x - GAME_CONFIG.ballRadius >= GAME_CONFIG.playerX &&
+        ball.y >= gameState.player.y &&
+        ball.y <= gameState.player.y + GAME_CONFIG.paddleHeight) {
+        
+        ball.x = GAME_CONFIG.playerX + GAME_CONFIG.paddleWidth + GAME_CONFIG.ballRadius;
+        
+        // Calculate bounce angle based on where ball hits paddle
+        const hitPos = (ball.y - (gameState.player.y + GAME_CONFIG.paddleHeight / 2)) / (GAME_CONFIG.paddleHeight / 2);
+        const bounceAngle = hitPos * Math.PI / 4; // Max 45 degrees
+        
+        const speed = Math.min(Math.sqrt(ball.vx * ball.vx + ball.vy * ball.vy) * 1.05, GAME_CONFIG.maxBallSpeed);
+        ball.vx = speed * Math.cos(bounceAngle);
+        ball.vy = speed * Math.sin(bounceAngle);
+        
+        // Ensure ball moves away from paddle
+        if (ball.vx < 0) ball.vx = -ball.vx;
+        
+        // Visual effects
+        gameState.effects.paddleGlow = 15;
+        gameState.effects.ballGlow = 10;
+        createParticles(ball.x, ball.y, gameState.player.color, 8);
+        
+        // Change ball color
+        const colors = [COLORS.neonGreen, COLORS.neonPurple, COLORS.neonOrange];
+        ball.color = colors[Math.floor(Math.random() * colors.length)];
+    }
+    
+    // AI paddle collision
+    if (ball.x + GAME_CONFIG.ballRadius >= GAME_CONFIG.aiX &&
+        ball.x + GAME_CONFIG.ballRadius <= GAME_CONFIG.aiX + GAME_CONFIG.paddleWidth &&
+        ball.y >= gameState.ai.y &&
+        ball.y <= gameState.ai.y + GAME_CONFIG.paddleHeight) {
+        
+        ball.x = GAME_CONFIG.aiX - GAME_CONFIG.ballRadius;
+        
+        // Calculate bounce angle
+        const hitPos = (ball.y - (gameState.ai.y + GAME_CONFIG.paddleHeight / 2)) / (GAME_CONFIG.paddleHeight / 2);
+        const bounceAngle = hitPos * Math.PI / 4;
+        
+        const speed = Math.min(Math.sqrt(ball.vx * ball.vx + ball.vy * ball.vy) * 1.05, GAME_CONFIG.maxBallSpeed);
+        ball.vx = -speed * Math.cos(bounceAngle);
+        ball.vy = speed * Math.sin(bounceAngle);
+        
+        // Ensure ball moves away from paddle
+        if (ball.vx > 0) ball.vx = -ball.vx;
+        
+        // Visual effects
+        gameState.effects.paddleGlow = 15;
+        gameState.effects.ballGlow = 10;
+        createParticles(ball.x, ball.y, gameState.ai.color, 8);
+        
+        // Change ball color
+        const colors = [COLORS.neonGreen, COLORS.neonPurple, COLORS.neonOrange];
+        ball.color = colors[Math.floor(Math.random() * colors.length)];
+    }
 }
 
-// Main loop
-function loop(time) {
-    update();
-    draw(time);
-    requestAnimationFrame(loop);
+function updateScoreDisplay() {
+    playerScoreElement.textContent = gameState.player.score;
+    aiScoreElement.textContent = gameState.ai.score;
+    
+    // Add glow effect to score that just changed
+    if (gameState.player.score > gameState.ai.score) {
+        playerScoreElement.style.textShadow = `0 0 20px ${COLORS.neonBlue}`;
+        setTimeout(() => {
+            playerScoreElement.style.textShadow = `0 0 10px rgba(0, 245, 255, 0.5)`;
+        }, 500);
+    } else if (gameState.ai.score > gameState.player.score) {
+        aiScoreElement.style.textShadow = `0 0 20px ${COLORS.neonPink}`;
+        setTimeout(() => {
+            aiScoreElement.style.textShadow = `0 0 10px rgba(0, 245, 255, 0.5)`;
+        }, 500);
+    }
 }
 
-// Start game
-loop(0);
+function resetBall(direction = 0) {
+    const ball = gameState.ball;
+    
+    ball.x = canvas.width / 2;
+    ball.y = canvas.height / 2;
+    
+    const angle = (Math.random() - 0.5) * Math.PI / 3; // Random angle within 60 degrees
+    ball.vx = GAME_CONFIG.ballSpeed * Math.cos(angle) * (direction || (Math.random() > 0.5 ? 1 : -1));
+    ball.vy = GAME_CONFIG.ballSpeed * Math.sin(angle);
+    
+    ball.trail = [];
+    ball.color = COLORS.neonGreen;
+    
+    // Reset AI target
+    gameState.ai.targetY = canvas.height / 2;
+}
+
+function updateEffects() {
+    // Decay effects
+    if (gameState.effects.paddleGlow > 0) gameState.effects.paddleGlow--;
+    if (gameState.effects.ballGlow > 0) gameState.effects.ballGlow--;
+    if (gameState.effects.screenShake > 0) gameState.effects.screenShake--;
+    
+    // Update particles
+    gameState.particles = gameState.particles.filter(particle => {
+        particle.update();
+        return !particle.isDead();
+    });
+}
+
+// Main game loop
+function gameLoop() {
+    // Clear canvas with screen shake effect
+    ctx.save();
+    if (gameState.effects.screenShake > 0) {
+        const shakeX = (Math.random() - 0.5) * gameState.effects.screenShake;
+        const shakeY = (Math.random() - 0.5) * gameState.effects.screenShake;
+        ctx.translate(shakeX, shakeY);
+    }
+    
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    if (!gameState.controls.paused) {
+        // Update game state
+        updatePlayerPaddle();
+        updateAI();
+        updateBall();
+        updateEffects();
+    }
+    
+    // Draw everything
+    drawNet();
+    drawPaddle(GAME_CONFIG.playerX, gameState.player.y, gameState.player.color, gameState.effects.paddleGlow > 0);
+    drawPaddle(GAME_CONFIG.aiX, gameState.ai.y, gameState.ai.color, gameState.effects.paddleGlow > 0);
+    drawBall(gameState.ball);
+    drawParticles();
+    drawPauseOverlay();
+    
+    ctx.restore();
+    
+    requestAnimationFrame(gameLoop);
+}
+
+// Initialize game
+function initGame() {
+    // Set initial canvas size
+    const rect = canvas.getBoundingClientRect();
+    canvas.width = rect.width;
+    canvas.height = rect.height;
+    
+    // Recalculate positions based on actual canvas size
+    GAME_CONFIG.aiX = canvas.width - GAME_CONFIG.playerX - GAME_CONFIG.paddleWidth;
+    
+    // Reset game state
+    gameState.player.y = (canvas.height - GAME_CONFIG.paddleHeight) / 2;
+    gameState.ai.y = (canvas.height - GAME_CONFIG.paddleHeight) / 2;
+    resetBall();
+    
+    updateScoreDisplay();
+}
+
+// Handle window resize
+window.addEventListener('resize', () => {
+    setTimeout(initGame, 100);
+});
+
+// Start the game
+initGame();
+gameLoop();
+
+// Add focus to canvas for keyboard controls
+canvas.setAttribute('tabindex', '0');
+canvas.focus();

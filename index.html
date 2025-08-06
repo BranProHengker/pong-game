@@ -2,13 +2,74 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title> Pong Game</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pong BW Game</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Space+Grotesk:wght@300;400;500;600&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <h1>Pong Game</h1>
-    <canvas id="pong" width="800" height="500"></canvas>
-    <div class="credit">nyoba ai nya copilot aja si</div>
+    <div class="stars"></div>
+    <div class="container">
+        <header class="game-header">
+            <h1 class="game-title">
+                <span class="title-text">PONG</span>
+                <pre>
+
+                </pre>
+            </h1>
+        </header>
+        
+        <main class="game-area">
+            <div class="game-wrapper">
+                <canvas id="pong" width="800" height="500"></canvas>
+                <div class="game-overlay">
+                    <div class="score-display">
+                        <div class="score-item">
+                            <span class="score-label">Player</span>
+                            <span class="score-value" id="playerScore">0</span>
+                        </div>
+                        <div class="score-divider"></div>
+                        <div class="score-item">
+                            <span class="score-label">AI</span>
+                            <span class="score-value" id="aiScore">0</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="game-controls">
+                <div class="control-group">
+                    <h3>Controls</h3>
+                    <div class="controls-grid">
+                        <div class="control-item">
+                            <kbd>↑</kbd>
+                            <span>Move Up</span>
+                        </div>
+                        <div class="control-item">
+                            <kbd>↓</kbd>
+                            <span>Move Down</span>
+                        </div>
+                        <div class="control-item">
+                            <kbd>Space</kbd>
+                            <span>Pause</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+        
+        <footer class="game-footer">
+            <div class="credit">
+                <span class="credit-icon">🎮</span>
+                hasil gabut
+                <span class="credit-icon">✨</span>
+            </div>
+        </footer>
+    </div>
+    
     <script src="script.js"></script>
+    <script src="missingScript.js"></script>
 </body>
 </html>
