@@ -17,6 +17,14 @@ const AI_X = canvas.width - PLAYER_X - PADDLE_WIDTH;
 const PADDLE_SPEED = 7.2;
 const BALL_SPEED = 6.2;
 
+// AI Weakness
+const AI_PADDLE_SPEED = 3.3; // Bikin AI lebih lambat
+const AI_REACT_DELAY = 12;   // Frame delay (semakin besar, semakin lambat AI bereaksi)
+const AI_ERROR_RANGE = 60;   // Error acak maksimum (pixel)
+
+let aiTargetY = 0;
+let aiDelayCounter = 0;
+
 // Game state
 let playerY = (canvas.height - PADDLE_HEIGHT) / 2;
 let aiY = (canvas.height - PADDLE_HEIGHT) / 2;
@@ -75,7 +83,6 @@ function drawBall(x, y, colorIndex) {
     ctx.save();
     ctx.shadowColor = BALL_COLORS[colorIndex];
     ctx.shadowBlur = 28;
-    // Ball gradient
     let grad = ctx.createRadialGradient(x, y, 4, x, y, BALL_RADIUS);
     grad.addColorStop(0, '#fff');
     grad.addColorStop(0.5, BALL_COLORS[colorIndex]);
@@ -118,9 +125,7 @@ function drawBGGlow(time) {
 
 // Draw everything
 function draw(time = 0) {
-    // Clear canvas
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-
     drawBGGlow(time);
     drawNet();
     drawPaddle(PLAYER_X, playerY, 0, paddleGlow > 0);
@@ -138,7 +143,7 @@ function update() {
     if (ballY - BALL_RADIUS < 0) {
         ballY = BALL_RADIUS;
         ballVY = -ballVY;
-        paddleGlow = 6; // Glow on collision
+        paddleGlow = 6;
     }
     if (ballY + BALL_RADIUS > canvas.height) {
         ballY = canvas.height - BALL_RADIUS;
@@ -154,7 +159,6 @@ function update() {
     ) {
         ballX = PLAYER_X + PADDLE_WIDTH + BALL_RADIUS;
         ballVX = -ballVX * 1.035;
-        // Effect based on hit position
         let collidePoint = ballY - (playerY + PADDLE_HEIGHT / 2);
         let normalized = collidePoint / (PADDLE_HEIGHT / 2);
         ballVY = BALL_SPEED * (normalized + (Math.random() - 0.5) * 0.3);
@@ -187,14 +191,20 @@ function update() {
         resetBall(1);
     }
 
-    // Basic AI movement (with some delay for fairness)
-    let aiCenter = aiY + PADDLE_HEIGHT / 2;
-    if (ballY < aiCenter - 16) {
-        aiY -= PADDLE_SPEED * 0.87;
-    } else if (ballY > aiCenter + 16) {
-        aiY += PADDLE_SPEED * 0.87;
+    // --- EASY AI ---
+    // Delay AI reaction
+    aiDelayCounter++;
+    if (aiDelayCounter > AI_REACT_DELAY) {
+        // Target Y is the ball + random error, but only set after delay
+        aiTargetY = ballY + (Math.random() - 0.5) * AI_ERROR_RANGE;
+        aiDelayCounter = 0;
     }
-    // Clamp AI paddle
+    let aiCenter = aiY + PADDLE_HEIGHT / 2;
+    if (aiTargetY < aiCenter - 16) {
+        aiY -= AI_PADDLE_SPEED;
+    } else if (aiTargetY > aiCenter + 16) {
+        aiY += AI_PADDLE_SPEED;
+    }
     if (aiY < 0) aiY = 0;
     if (aiY > canvas.height - PADDLE_HEIGHT) aiY = canvas.height - PADDLE_HEIGHT;
 
@@ -208,6 +218,7 @@ function resetBall(dir = 1) {
     ballVX = BALL_SPEED * (dir || (Math.random() > 0.5 ? 1 : -1));
     ballVY = BALL_SPEED * (Math.random() * 2 - 1);
     ballColorIndex = Math.floor(Math.random() * BALL_COLORS.length);
+    aiTargetY = canvas.height / 2; // Reset AI target
 }
 
 // Main loop
